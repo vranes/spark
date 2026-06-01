@@ -3349,4 +3349,10 @@ private[sql] object QueryExecutionErrors extends QueryErrorsBase with ExecutionE
         "expectedFamily" -> expectedFamily,
         "actualFamily" -> actualFamily))
   }
+
+  def binByInvalidRangeError(rangeStart: String, rangeEnd: String): SparkRuntimeException = {
+    new SparkRuntimeException(
+      errorClass = "BIN_BY_INVALID_RANGE",
+      messageParameters = Map("rangeStart" -> rangeStart, "rangeEnd" -> rangeEnd))
+  }
 }

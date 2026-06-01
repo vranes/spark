@@ -937,8 +937,33 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
         throw SparkException.internalError(
           "Deduplicate operator for non streaming data source should have been replaced " +
             "by aggregate in the optimizer")
-      case _: logical.BinBy =>
-        throw new SparkUnsupportedOperationException("UNSUPPORTED_FEATURE.BIN_BY")
+      case b: logical.BinBy =>
+        val childOutput = b.child.output
+        def colIndex(attr: Attribute): Int = {
+          val idx = childOutput.indexWhere(_.exprId == attr.exprId)
+          if (idx < 0) {
+            throw SparkException.internalError(
+              s"BIN BY column ${attr.name} (${attr.exprId}) is not in the child output")
+          }
+          idx
+        }
+        // binWidthExpr / originExpr are analyzer-guaranteed foldable and non-null; guard anyway so
+        // a violated invariant surfaces as an internal error rather than a silent 0L or hang.
+        def evalMicros(e: Expression, clause: String): Long = e.eval() match {
+          case l: Long => l
+          case null => throw SparkException.internalError(s"BIN BY $clause evaluated to null")
+          case other =>
+            throw SparkException.internalError(s"BIN BY $clause evaluated to non-long: $other")
+        }
+        execution.BinByExec(
+          binWidthMicros = evalMicros(b.binWidthExpr, "BIN WIDTH"),
+          originMicros = evalMicros(b.originExpr, "ALIGN TO"),
+          rangeStartIdx = colIndex(b.rangeStart),
+          rangeEndIdx = colIndex(b.rangeEnd),
+          distributeColumnIndices = b.distributeColumns.map(colIndex),
+          timeZoneId = b.timeZoneId,
+          appendedAttributes = b.appendedAttributes,
+          child = planLater(b.child)) :: Nil
 
       case logical.DeserializeToObject(deserializer, objAttr, child) =>
         execution.DeserializeToObjectExec(deserializer, objAttr, planLater(child)) :: Nil
